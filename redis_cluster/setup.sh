@@ -45,8 +45,14 @@ for port in $(seq $PORT_FROM $PORT_TO);
   do
     if docker ps | grep redis-${port} >/dev/null 2>&1; then
        docker stop redis-${port}
+    fi
+    if docker ps -a | grep redis-${port} >/dev/null 2>&1; then
        docker rm redis-${port}
     fi
+done
+
+for port in $(seq $PORT_FROM $PORT_TO);
+  do
     docker run -it -d -p ${port}:${port} -p 1${port}:1${port} \
        --privileged=true -v $REDIS_CLUSTER_PATH/${port}/conf/redis.conf:/usr/local/etc/redis/redis.conf \
        --privileged=true -v $REDIS_CLUSTER_PATH/${port}/data:/data \
@@ -54,12 +60,13 @@ for port in $(seq $PORT_FROM $PORT_TO);
        --sysctl net.core.somaxconn=1024 redis redis-server /usr/local/etc/redis/redis.conf;
 done
 
-#docker exec -it redis-$PORT_FROM redis-cli --cluster create 192.168.2.109:8010 192.168.2.109:8011 192.168.2.109:8012
+rm -rf $SHELL_FOLDER/redis-tmp
+
 cmd="docker exec -it redis-$PORT_FROM redis-cli --cluster create";
 for port in $(seq $PORT_FROM $PORT_TO); 
   do cmd+=' $LOCAL_IP:'${port};
 done; 
 eval "$cmd";
 
-#docker exec -it redis-8010 redis-cli -c -h 192.168.2.109 -p 8012
+docker exec -it redis-$PORT_TO redis-cli -c -h $LOCAL_IP -p $PORT_FROM
 
