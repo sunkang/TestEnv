@@ -1,6 +1,9 @@
 # MAC version
 # chmod 777 setup.sh
 #
+#For ubuntu
+# LOCAL_IP =ifconfig -a|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}'|tr -d "addr:"
+#
 LOCAL_IP=`ifconfig | grep inet | grep -v inet6 | grep -v 127 | cut -d ' ' -f2`
 SHELL_FOLDER=`pwd`
 REDIS_CLUSTER_PATH=$SHELL_FOLDER/redis-tmp/redis-cluster
