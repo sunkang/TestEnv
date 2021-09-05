@@ -12,4 +12,4 @@ RUN apt update \
     && apt install -y docker-ce docker-ce-cli containerd.io
 
 WORKDIR /
-CMD ["/sbin/init"]
+CMD ["/sbin/init" && "docker --registry-mirror=https://registry.docker-cn.com"]
