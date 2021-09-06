@@ -1,7 +1,7 @@
 #
 # docker build . -t ubuntu:docker
-# docker run --rm -itd --privileged=true ubuntu:docker /sbin/init
-# docker exec -it [container_id] bash
+# docker run --rm -itd --net host --name ubuntu_dockerhost --privileged=true ubuntu:docker /sbin/init
+# docker exec -it ubuntu_dockerhost bash
 #
 FROM ubuntu
 RUN apt update \
