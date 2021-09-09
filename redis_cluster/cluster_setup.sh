@@ -1,13 +1,6 @@
 # MAC version
 # chmod 777 setup.sh
 #
-#For ubuntu
-# LOCAL_IP =ifconfig -a|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}'|tr -d "addr:"
-#
-
-SHELL_FOLDER=`pwd`
-REDIS_CLUSTER_PATH=$SHELL_FOLDER/redis-tmp/redis-cluster
-
 LOCAL_IP=`ifconfig eth0 |awk -F '[ :]+' 'NR==2 {print $3}'`
 
 #For mac os
@@ -15,15 +8,14 @@ if uname -a | grep Darwin > /dev/null > /dev/null 2>&1; then
   LOCAL_IP=`ifconfig en0 | grep "inet\ " | awk '{ print $2}'`
 fi
 
+
+SHELL_FOLDER=`pwd`
+REDIS_CLUSTER_PATH=$SHELL_FOLDER/redis-tmp/redis-cluster
+
 REDIS_PWD=pwd
 CLUSTER_COUNT=3
 PORT_FROM=8010
 PORT_TO=`expr $PORT_FROM + $CLUSTER_COUNT - 1`
-
-#For mac os
-if uname -a | grep Darwin > /dev/null > /dev/null 2>&1; then
-  LOCAL_IP=`ifconfig en0 | grep "inet\ " | awk '{ print $2}'`
-fi
 
 #For mac os
 if uname -a | grep Darwin > /dev/null > /dev/null 2>&1; then
@@ -41,8 +33,14 @@ fi
 mkdir -p $REDIS_CLUSTER_PATH
 cd $REDIS_CLUSTER_PATH
 
-echo 'port ${PORT}'  > redis-cluster.tmpl
-echo 'appendonly yes' >> redis-cluster.tmpl
+echo 'port ${PORT}
+cluster-enabled yes
+cluster-config-file nodes.conf
+cluster-node-timeout 5000'  > redis-cluster.tmpl
+echo "cluster-announce-ip $LOCAL_IP" >> redis-cluster.tmpl
+echo 'cluster-announce-port ${PORT}
+cluster-announce-bus-port 1${PORT}
+appendonly yes' >> redis-cluster.tmpl
 
 if ! docker network ls | grep redis-net >/dev/null 2>&1; then
   echo "create docker network redis-net";
@@ -53,9 +51,6 @@ for port in $(seq $PORT_FROM $PORT_TO);
   do
     mkdir -p $REDIS_CLUSTER_PATH/${port}/conf;
     PORT=${port} envsubst < $REDIS_CLUSTER_PATH/redis-cluster.tmpl > $REDIS_CLUSTER_PATH/${port}/conf/redis.conf;
-    if [ $PORT_FROM != ${port} ]; then
-      echo "slaveof $LOCAL_IP $PORT_FROM" >> $REDIS_CLUSTER_PATH/${port}/conf/redis.conf;
-    fi
     mkdir -p $REDIS_CLUSTER_PATH/${port}/data;
 done
 
@@ -78,4 +73,19 @@ for port in $(seq $PORT_FROM $PORT_TO);
        --sysctl net.core.somaxconn=1024 redis redis-server /usr/local/etc/redis/redis.conf;
 done
 
+cmd="docker exec -it redis-$PORT_FROM redis-cli --cluster create";
+for port in $(seq $PORT_FROM $PORT_TO); 
+  do cmd+=' $LOCAL_IP:'${port};
+done; 
+eval "$cmd";
+
+
+for port in $(seq $PORT_FROM $PORT_TO);
+  do
+    echo "requirepass $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/conf/redis.conf;
+    echo "masterauth $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/conf/redis.conf;
+    docker exec -it redis-${port} redis-cli -c -h localhost -p ${port} shutdown
+done
+
+docker exec -it redis-$PORT_TO redis-cli -c -h $LOCAL_IP -p $PORT_FROM -a $REDIS_PWD
 
