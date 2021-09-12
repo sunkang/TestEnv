@@ -1,4 +1,4 @@
-# MAC version
+#
 # chmod 777 setup.sh
 #
 LOCAL_IP=`ifconfig eth0 |awk -F '[ :]+' 'NR==2 {print $3}'`
