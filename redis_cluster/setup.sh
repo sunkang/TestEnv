@@ -86,6 +86,7 @@ for port in $(seq $REDIS_PORT_FROM $REDIS_PORT_TO);
   do
     if docker ps | grep redis-${port} >/dev/null 2>&1; then
        docker stop redis-${port}
+       sleep 2s 
     fi
 done
 
@@ -93,6 +94,7 @@ for port in $(seq $REDIS_PORT_FROM $REDIS_PORT_TO);
   do
     if docker ps -a | grep redis-${port} >/dev/null 2>&1; then
        docker rm redis-${port}
+       sleep 2s 
     fi
 done
 
@@ -100,6 +102,7 @@ for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
   do
     if docker ps | grep sentinel-${port} >/dev/null 2>&1; then
        docker stop sentinel-${port}
+       sleep 2s 
     fi
 done
 
@@ -107,6 +110,7 @@ for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
   do
     if docker ps -a | grep sentinel-${port} >/dev/null 2>&1; then
        docker rm sentinel-${port}
+       sleep 2s 
     fi
 done
 
@@ -123,7 +127,8 @@ for port in $(seq $REDIS_PORT_FROM $REDIS_PORT_TO);
        --privileged=true -v $REDIS_PATH/${port}/data:/data \
        --restart always --name redis-${port} --net redis-net \
        --sysctl net.core.somaxconn=1024 redis redis-server /usr/local/etc/redis/redis.conf;
-
+    
+    sleep 2s 
     echo "docker run -it -d -p ${port}:${port} -p 1${port}:1${port} \
        --privileged=true -v $REDIS_PATH/${port}/conf/redis.conf:/usr/local/etc/redis/redis.conf \
        --privileged=true -v $REDIS_PATH/${port}/data:/data \
@@ -139,6 +144,7 @@ for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
        --restart always --name sentinel-${port} --net redis-net \
        --sysctl net.core.somaxconn=1024 --privileged=true redis redis-sentinel /usr/local/etc/redis/sentinel.conf;
 
+    sleep 2s 
     echo "docker run -it -d -p ${port}:${port} \
        --privileged=true -v $SENTINEL_PATH/${port}/conf/sentinel.conf:/usr/local/etc/redis/sentinel.conf \
        --privileged=true -v $SENTINEL_PATH/${port}/data:/data \
