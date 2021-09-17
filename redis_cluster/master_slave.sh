@@ -5,9 +5,9 @@
 # LOCAL_IP =ifconfig -a|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}'|tr -d "addr:"
 #
 
-SHELL_FOLDER=`pwd`
-REDIS_PATH=$SHELL_FOLDER/redis-tmp/redis
-SENTINEL_PATH=$SHELL_FOLDER/redis-tmp/sentinel
+MASTER_SLAVE_TMP_FOLDER=`pwd`"/master-slave-tmp"
+REDIS_PATH=$MASTER_SLAVE_TMP_FOLDER/redis
+SENTINEL_PATH=$MASTER_SLAVE_TMP_FOLDER/sentinel
 
 LOCAL_IP=`ifconfig eth0 |awk -F '[ :]+' 'NR==2 {print $3}'`
 
@@ -20,27 +20,22 @@ REDIS_PWD=pwd123pwd
 
 SENTINEL_COUNT=3
 SENTINEL_VALID_COUNT=2
-SENTINEL_PORT_FROM=19010
+SENTINEL_PORT_FROM=17010
 SENTINEL_PORT_TO=`expr $SENTINEL_PORT_FROM + $SENTINEL_COUNT - 1`
 
 REDIS_COUNT=3               #1 master with 2 slave
-REDIS_PORT_MASTER=8010      #master port
+REDIS_PORT_MASTER=6010      #master port
 
 REDIS_PORT_FROM=$REDIS_PORT_MASTER       #master node port
 REDIS_PORT_TO=`expr $REDIS_PORT_FROM + $REDIS_COUNT - 1`
-
-#For mac os
-if uname -a | grep Darwin > /dev/null > /dev/null 2>&1; then
-  LOCAL_IP=`ifconfig en0 | grep "inet\ " | awk '{ print $2}'`
-fi
 
 if ! docker images | grep redis >/dev/null 2>&1; then
   echo "docker pull redis"
   docker pull redis
 fi
 
-if [[ -d $SHELL_FOLDER/redis-tmp ]];then
-  rm -rf $SHELL_FOLDER/redis-tmp
+if [[ -d $MASTER_SLAVE_TMP_FOLDER ]];then
+  rm -rf $MASTER_SLAVE_TMP_FOLDER
 fi
 
 mkdir -p $REDIS_PATH
@@ -79,7 +74,7 @@ for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
   do
     mkdir -p $SENTINEL_PATH/${port}/data;
     PORT=${port} envsubst < $SENTINEL_PATH/sentinel.tmpl > $SENTINEL_PATH/${port}/data/sentinel.conf;
-    cat $SENTINEL_PATH/${port}/data/sentinel.conf;
+    #cat $SENTINEL_PATH/${port}/data/sentinel.conf;
 done
 
 for port in $(seq $REDIS_PORT_FROM $REDIS_PORT_TO);
@@ -117,6 +112,12 @@ done
 if ! docker network ls | grep redis-net >/dev/null 2>&1; then
   echo "create docker network redis-net";
   docker network create redis-net;
+fi
+
+if [[ $1 == "stop" ]]; then
+  echo "stop docker containers"
+  rm -rf $MASTER_SLAVE_TMP_FOLDER
+  exit 1
 fi
 
 for port in $(seq $REDIS_PORT_FROM $REDIS_PORT_TO);
