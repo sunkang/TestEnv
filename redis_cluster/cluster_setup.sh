@@ -22,13 +22,12 @@ CLUSTER_PORT_ARRAY=($(seq $PORT_FROM $PORT_TO))
 CLUSTER_MASTER_ID_ARRAY=()
 
 SLAVE_PORT_FROM=8110
-SLAVE_PORT_ARRAY=($(seq $SLAVE_PORT_FROM `expr $SLAVE_PORT_FROM + $CLUSTER_MASTER_COUNT - 1`))
+SLAVE_PORT_ARRAY=($(seq $SLAVE_PORT_FROM `expr $SLAVE_PORT_FROM + $(($CLUSTER_SLAVE_NUM * $CLUSTER_MASTER_COUNT)) - 1`))
 
 SENTINEL_COUNT=3
 SENTINEL_VALID_COUNT=2
 SENTINEL_PORT_FROM=19010
-SENTINEL_PORT_TO=`expr $SENTINEL_PORT_FROM + $SENTINEL_COUNT - 1`
-SENTINEL_PORT_ARRAY=($(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO))
+SENTINEL_PORT_ARRAY=($(seq $SENTINEL_PORT_FROM `expr $SENTINEL_PORT_FROM + $SENTINEL_COUNT - 1`))
 
 if ! docker images | grep redis >/dev/null 2>&1; then
   docker pull redis
@@ -63,14 +62,17 @@ if ! docker network ls | grep redis-net >/dev/null 2>&1; then
   docker network create redis-net;
 fi
 
-for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+for(( i=0;i<$CLUSTER_MASTER_COUNT;i++)) do
     port=${CLUSTER_PORT_ARRAY[$i]}
-    slave_port=${SLAVE_PORT_ARRAY[$i]}
-
     mkdir -p $REDIS_CLUSTER_PATH/${port}/data;
-    mkdir -p $REDIS_CLUSTER_PATH/${port}/slave_data;
     PORT=${port} envsubst < $REDIS_CLUSTER_PATH/redis-cluster.tmpl > $REDIS_CLUSTER_PATH/${port}/data/redis.conf;
-    PORT=${slave_port} MASTER_IP_PORT=$LOCAL_IP" "${port} envsubst < $REDIS_CLUSTER_PATH/redis-cluster-slave.tmpl > $REDIS_CLUSTER_PATH/${port}/slave_data/redis_slave.conf;
+
+    for (( j=0;j<$CLUSTER_SLAVE_NUM;j++ )) do
+      index=$(( $(($j*$CLUSTER_MASTER_COUNT)) + $i))
+      slave_port=${SLAVE_PORT_ARRAY[$index]}
+      mkdir -p $REDIS_CLUSTER_PATH/${port}/slave${index}_data;
+      PORT=${slave_port} MASTER_IP_PORT=$LOCAL_IP" "${port} envsubst < $REDIS_CLUSTER_PATH/redis-cluster-slave.tmpl > $REDIS_CLUSTER_PATH/${port}/slave${index}_data/redis_slave.conf;
+    done
 done
 
 mkdir -p $SENTINEL_PATH
@@ -82,18 +84,16 @@ protected-mode  no
 pidfile  /data/redis-sentinel_${PORT}.log
 logfile  /data/sentinel_${PORT}.log' > sentinel.tmpl;
 
-for(( i=0;i<${#SENTINEL_PORT_ARRAY[@]};i++)) do
+for(( i=0;i<$SENTINEL_COUNT;i++ )) do
   port=${SENTINEL_PORT_ARRAY[$i]}
   mkdir -p $SENTINEL_PATH/${port}/data;
   PORT=${port} envsubst < $SENTINEL_PATH/sentinel.tmpl > $SENTINEL_PATH/${port}/data/sentinel.conf;
 
-  for(( j=0;j<${#CLUSTER_PORT_ARRAY[@]};j++)) do
-    master_port=${CLUSTER_PORT_ARRAY[$j]}
-    echo "sentinel monitor mymaster${j} $LOCAL_IP ${master_port} $SENTINEL_VALID_COUNT" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
-    echo "sentinel down-after-milliseconds mymaster${j} 3000" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
-    echo "sentinel failover-timeout mymaster${j} 5000" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
-    echo "sentinel auth-pass mymaster${j} $REDIS_PWD" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
-  done
+  master_port=${CLUSTER_PORT_ARRAY[$i]}
+  echo "sentinel monitor mymaster${i} $LOCAL_IP ${master_port} $SENTINEL_VALID_COUNT" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
+  echo "sentinel down-after-milliseconds mymaster${i} 3000" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
+  echo "sentinel failover-timeout mymaster${i} 5000" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
+  echo "sentinel auth-pass mymaster${i} $REDIS_PWD" >> $SENTINEL_PATH/${port}/data/sentinel.conf;
 done
 
 echo_eval() {
@@ -145,12 +145,12 @@ if [[ $1 == "stop" ]]; then
   exit 1
 fi
 
-for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+for(( i=0;i<$CLUSTER_MASTER_COUNT;i++)) do
     port=${CLUSTER_PORT_ARRAY[$i]}
-    docker run -it -d -p ${port}:${port} -p 1${port}:1${port} \
+    echo_eval "docker run -it -d -p ${port}:${port} -p 1${port}:1${port} \
        --privileged=true -v $REDIS_CLUSTER_PATH/${port}/data:/data \
        --restart always --name redis-${port} --net redis-net \
-       --sysctl net.core.somaxconn=1024 redis redis-server /data/redis.conf;
+       --sysctl net.core.somaxconn=1024 redis redis-server /data/redis.conf";
     sleep 2s
 done
 
@@ -163,55 +163,64 @@ cmd+=" --cluster-replicas 0";
 echo "$cmd";
 eval "$cmd";
 
-for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+for(( i=0;i<$CLUSTER_MASTER_COUNT;i++ )) do
     port=${CLUSTER_PORT_ARRAY[$i]}
     cluster_id=`docker exec -it redis-${port} redis-cli -h $LOCAL_IP -p ${port} cluster myid`;
     CLUSTER_MASTER_ID_ARRAY[$i]=${cluster_id}
 done
 
-for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++ )) do
     port=${CLUSTER_PORT_ARRAY[$i]}
-    slave_port=${SLAVE_PORT_ARRAY[$i]}
 
-    echo_eval "docker run -it -d -p ${slave_port}:${slave_port} -p 1${slave_port}:1${slave_port} \
-       --privileged=true -v $REDIS_CLUSTER_PATH/${port}/slave_data:/data \
-       --restart always --name redis-slave-${slave_port} --net redis-net \
-       --sysctl net.core.somaxconn=1024 redis redis-server /data/redis_slave.conf"
-    sleep 2s
+    for (( j=0;j<$CLUSTER_SLAVE_NUM;j++ )) do
+      index=$(( $(($j*$CLUSTER_MASTER_COUNT)) + $i))
+      slave_port=${SLAVE_PORT_ARRAY[$index]}
+      echo_eval "docker run -it -d -p ${slave_port}:${slave_port} -p 1${slave_port}:1${slave_port} \
+         --privileged=true -v $REDIS_CLUSTER_PATH/${port}/slave${index}_data:/data \
+         --restart always --name redis-slave-${slave_port} --net redis-net \
+         --sysctl net.core.somaxconn=1024 redis redis-server /data/redis_slave.conf"
+      sleep 2s
+    done
 done
 
 sleep 5s
 
-for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+for(( i=0;i<$CLUSTER_MASTER_COUNT;i++)) do
     port=${CLUSTER_PORT_ARRAY[$i]}
     slave_port=${SLAVE_PORT_ARRAY[$i]}
 
     echo "requirepass $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/data/redis.conf;
-    echo "requirepass $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/slave_data/redis_slave.conf;
     echo "masterauth $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/data/redis.conf;
-    echo "masterauth $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/slave_data/redis_slave.conf;
+
+    for (( j=0;j<$CLUSTER_SLAVE_NUM;j++ )) do
+      index=$(( $(($j*$CLUSTER_MASTER_COUNT)) + $i))
+      echo "requirepass $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/slave${index}_data/redis_slave.conf;
+      echo "masterauth $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/slave${index}_data/redis_slave.conf;
+    done
 
     docker exec -it redis-${port} redis-cli -c -h $LOCAL_IP -p ${port} shutdown
     docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} shutdown
     sleep 3s
 done
-
+sleep 8s
 exec_start_docker "${CLUSTER_PORT_ARRAY[*]}" "redis"
 exec_start_docker "${SLAVE_PORT_ARRAY[*]}" "redis-slave"
-
-sleep 5s
-
-for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+sleep 8s
+for(( i=0;i<$CLUSTER_MASTER_COUNT;i++)) do
     port=${CLUSTER_PORT_ARRAY[$i]}
-    slave_port=${SLAVE_PORT_ARRAY[$i]}
     cluster_id=${CLUSTER_MASTER_ID_ARRAY[$i]}
     echo_eval "docker exec -it redis-${port} redis-cli -c -h $LOCAL_IP -p ${port} -a $REDIS_PWD cluster nodes"
-    echo_eval "docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} -a $REDIS_PWD cluster meet $LOCAL_IP ${port}"
-    echo_eval "docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} -a $REDIS_PWD cluster replicate ${cluster_id}"
+
+    for (( j=0;j<$CLUSTER_SLAVE_NUM;j++ )) do
+      index=$(( $(($j*$CLUSTER_MASTER_COUNT)) + $i))
+      slave_port=${SLAVE_PORT_ARRAY[$index]}
+      echo_eval "docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} -a $REDIS_PWD cluster meet $LOCAL_IP ${port}"
+      echo_eval "docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} -a $REDIS_PWD cluster replicate ${cluster_id}"
+    done
 done
 
-for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
-  do
+for(( i=0;i<$SENTINEL_COUNT;i++)) do
+    port=${SENTINEL_PORT_ARRAY[$i]}
     echo_eval "docker run -it -d -p ${port}:${port} \
        --privileged=true -v $SENTINEL_PATH/${port}/data:/data \
        --restart always --name sentinel-${port} --net redis-net \
