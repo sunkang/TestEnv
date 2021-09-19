@@ -1,8 +1,8 @@
 #
 # chmod 777 setup.sh
-#
-#For ubuntu
-# LOCAL_IP =ifconfig -a|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}'|tr -d "addr:"
+# please using redis 6+ version docker images as well.
+# After exec this shell, try cmd "docker stop redis-6010"  to check if sentinel take effect.
+# (it will cost servel seconds, set the redis configuration as you wish within the conf file).
 #
 
 MASTER_SLAVE_TMP_FOLDER=`pwd`"/master-slave-tmp"

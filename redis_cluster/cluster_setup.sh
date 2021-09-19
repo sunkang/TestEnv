@@ -1,5 +1,8 @@
 #
 # chmod 777 setup.sh
+# please using redis 6+ version docker images as well.
+# After exec this shell, try cmd "docker stop redis-8010"  to check if sentinel take effect.
+# (it will cost servel seconds, set the redis configuration as you wish within the conf file).
 #
 LOCAL_IP=`ifconfig eth0 |awk -F '[ :]+' 'NR==2 {print $3}'`
 
