@@ -19,6 +19,7 @@ CLUSTER_MASTER_COUNT=3
 PORT_FROM=8010
 PORT_TO=`expr $PORT_FROM + $CLUSTER_MASTER_COUNT - 1`
 CLUSTER_PORT_ARRAY=($(seq $PORT_FROM $PORT_TO))
+CLUSTER_MASTER_ID_ARRAY=()
 
 SLAVE_PORT_FROM=8110
 SLAVE_PORT_ARRAY=($(seq $SLAVE_PORT_FROM `expr $SLAVE_PORT_FROM + $CLUSTER_MASTER_COUNT - 1`))
@@ -95,83 +96,61 @@ for(( i=0;i<${#SENTINEL_PORT_ARRAY[@]};i++)) do
   done
 done
 
-for port in $(seq $PORT_FROM $PORT_TO);
-  do
-    if docker ps | grep redis-${port} >/dev/null 2>&1; then
-       echo "docker stop redis-${port}"
-       docker stop redis-${port}
-       sleep 2s
-    fi
-done
+echo_eval() {
+  echo $1
+  eval $1
+}
 
-for port in $(seq $PORT_FROM $PORT_TO);
-  do
-    slave_port=$((10#${port}+100))
-    if docker ps | grep redis-slave-${slave_port} >/dev/null 2>&1; then
-       echo "docker stop redis-slave-${slave_port}"
-       docker stop redis-slave-${slave_port}
-       sleep 2s
-    fi
-done
+exec_start_docker() {
+  active_name=""
+  arary=($1)
+  for(( i=0;i<${#arary[@]};i++)) do
+      port=${arary[$i]}
+      if ! docker ps | grep $2-${port} >/dev/null 2>&1; then
+        active_name+=" $2-${port}"
+      fi
+  done
+  if [ ! "$active_name" == "" ]; then
+    echo_eval "docker start $active_name"
+  fi
+}
 
-for port in $(seq $PORT_FROM $PORT_TO);
-  do
-    if docker ps -a | grep redis-${port} >/dev/null 2>&1; then
-       echo "docker rm redis-${port}"
-       docker rm redis-${port}
-       sleep 2s
-    fi
-done
-
-for port in $(seq $PORT_FROM $PORT_TO);
-  do
-    slave_port=$((10#${port}+100))
-    if docker ps -a | grep redis-slave-${slave_port} >/dev/null 2>&1; then
-       echo "docker rm redis-slave-${slave_port}"
-       docker rm redis-slave-${slave_port}
-       sleep 2s
-    fi
-done
-
-for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
-  do
-    if docker ps | grep sentinel-${port} >/dev/null 2>&1; then
-       docker stop sentinel-${port}
-       sleep 2s
-    fi
-done
-
-for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
-  do
-    if docker ps -a | grep sentinel-${port} >/dev/null 2>&1; then
-       docker rm sentinel-${port}
-       sleep 2s
-    fi
-done
+exec_rm_docker() {
+  active_name=""
+  deactive_name=""
+  arary=($1)
+  for(( i=0;i<${#arary[@]};i++)) do
+      port=${arary[$i]}
+      if docker ps | grep $2-${port} >/dev/null 2>&1; then
+        active_name+=" $2-${port}"
+      fi
+      if docker ps -a | grep $2-${port} >/dev/null 2>&1; then
+        deactive_name+=" $2-${port}"
+      fi
+  done
+  if [ ! "$active_name" == "" ]; then
+    echo_eval "docker stop $active_name"
+  fi
+  sleep 3s
+  if [ ! "$deactive_name" == "" ]; then
+    echo_eval "docker rm $deactive_name"
+  fi
+}
+exec_rm_docker "${CLUSTER_PORT_ARRAY[*]}" "redis"
+exec_rm_docker "${SLAVE_PORT_ARRAY[*]}" "redis-slave"
+exec_rm_docker "${SENTINEL_PORT_ARRAY[*]}" "sentinel"
 
 if [[ $1 == "stop" ]]; then
   echo "stop docker containers"
   exit 1
 fi
 
-for port in $(seq $PORT_FROM $PORT_TO);
-  do
+for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+    port=${CLUSTER_PORT_ARRAY[$i]}
     docker run -it -d -p ${port}:${port} -p 1${port}:1${port} \
        --privileged=true -v $REDIS_CLUSTER_PATH/${port}/data:/data \
        --restart always --name redis-${port} --net redis-net \
        --sysctl net.core.somaxconn=1024 redis redis-server /data/redis.conf;
-    sleep 2s
-
-    slave_port=$((10#${port}+100))
-    echo "docker run -it -d -p ${slave_port}:${slave_port} -p 1${slave_port}:1${slave_port} \
-       --privileged=true -v $REDIS_CLUSTER_PATH/${port}/slave_data:/data \
-       --restart always --name redis-slave-${slave_port} --net redis-net \
-       --sysctl net.core.somaxconn=1024 redis redis-server /data/redis_slave.conf"
-
-    docker run -it -d -p ${slave_port}:${slave_port} -p 1${slave_port}:1${slave_port} \
-       --privileged=true -v $REDIS_CLUSTER_PATH/${port}/slave_data:/data \
-       --restart always --name redis-slave-${slave_port} --net redis-net \
-       --sysctl net.core.somaxconn=1024 redis redis-server /data/redis_slave.conf;
     sleep 2s
 done
 
@@ -180,18 +159,28 @@ for port in $(seq $PORT_FROM $PORT_TO);
   do
     cmd+=" $LOCAL_IP:"${port};
 done;
+cmd+=" --cluster-replicas 0";
 echo "$cmd";
 eval "$cmd";
 
 for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
     port=${CLUSTER_PORT_ARRAY[$i]}
+    cluster_id=`docker exec -it redis-${port} redis-cli -h $LOCAL_IP -p ${port} cluster myid`;
+    CLUSTER_MASTER_ID_ARRAY[$i]=${cluster_id}
+done
+
+for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+    port=${CLUSTER_PORT_ARRAY[$i]}
     slave_port=${SLAVE_PORT_ARRAY[$i]}
 
-    cluster_id=`docker exec -it redis-${port} redis-cli -h $LOCAL_IP -p ${port} cluster myid`;
-    echo "docker exec -it redis-slave-${slave_port} redis-cli --cluster add-node $LOCAL_IP:${slave_port} $LOCAL_IP:${port} --cluster-master-id ${cluster_id}";
-    docker exec -it redis-slave-${slave_port} redis-cli --cluster add-node $LOCAL_IP:${slave_port} $LOCAL_IP:${port} --cluster-master-id ${cluster_id};
-    sleep 1s
-done;
+    echo_eval "docker run -it -d -p ${slave_port}:${slave_port} -p 1${slave_port}:1${slave_port} \
+       --privileged=true -v $REDIS_CLUSTER_PATH/${port}/slave_data:/data \
+       --restart always --name redis-slave-${slave_port} --net redis-net \
+       --sysctl net.core.somaxconn=1024 redis redis-server /data/redis_slave.conf"
+    sleep 2s
+done
+
+sleep 5s
 
 for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
     port=${CLUSTER_PORT_ARRAY[$i]}
@@ -202,25 +191,31 @@ for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
     echo "masterauth $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/data/redis.conf;
     echo "masterauth $REDIS_PWD" >> $REDIS_CLUSTER_PATH/${port}/slave_data/redis_slave.conf;
 
-    docker exec -it redis-${port} redis-cli -c -h localhost -p ${port} shutdown
-    docker exec -it redis-slave-${slave_port} redis-cli -c -h localhost -p ${slave_port} shutdown
+    docker exec -it redis-${port} redis-cli -c -h $LOCAL_IP -p ${port} shutdown
+    docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} shutdown
+    sleep 3s
 done
 
-sleep 2s
+exec_start_docker "${CLUSTER_PORT_ARRAY[*]}" "redis"
+exec_start_docker "${SLAVE_PORT_ARRAY[*]}" "redis-slave"
+
+sleep 5s
+
+for(( i=0;i<${#CLUSTER_PORT_ARRAY[@]};i++)) do
+    port=${CLUSTER_PORT_ARRAY[$i]}
+    slave_port=${SLAVE_PORT_ARRAY[$i]}
+    cluster_id=${CLUSTER_MASTER_ID_ARRAY[$i]}
+    echo_eval "docker exec -it redis-${port} redis-cli -c -h $LOCAL_IP -p ${port} -a $REDIS_PWD cluster nodes"
+    echo_eval "docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} -a $REDIS_PWD cluster meet $LOCAL_IP ${port}"
+    echo_eval "docker exec -it redis-slave-${slave_port} redis-cli -c -h $LOCAL_IP -p ${slave_port} -a $REDIS_PWD cluster replicate ${cluster_id}"
+done
 
 for port in $(seq $SENTINEL_PORT_FROM $SENTINEL_PORT_TO);
   do
-    docker run -it -d -p ${port}:${port} \
+    echo_eval "docker run -it -d -p ${port}:${port} \
        --privileged=true -v $SENTINEL_PATH/${port}/data:/data \
        --restart always --name sentinel-${port} --net redis-net \
-       --sysctl net.core.somaxconn=1024 --privileged=true redis redis-server /data/sentinel.conf --sentinel
-
-    sleep 2s
-    echo "docker run -it -d -p ${port}:${port} \
-       --privileged=true -v $SENTINEL_PATH/${port}/data:/data \
-       --restart always --name sentinel-${port} --net redis-net \
-       --sysctl net.core.somaxconn=1024 --privileged=true redis redis-server /data/sentinel.conf --sentinel;"
+       --sysctl net.core.somaxconn=1024 --privileged=true redis redis-server /data/sentinel.conf --sentinel"
 done
 
-echo "docker exec -it redis-$PORT_TO redis-cli -c -h $LOCAL_IP -p $PORT_FROM -a $REDIS_PWD"
-docker exec -it redis-$PORT_TO redis-cli -c -h $LOCAL_IP -p $PORT_FROM -a $REDIS_PWD
+echo_eval "docker exec -it redis-$PORT_TO redis-cli -c -h $LOCAL_IP -p $PORT_FROM -a $REDIS_PWD"
