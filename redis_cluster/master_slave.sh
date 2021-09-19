@@ -1,8 +1,10 @@
 #
-# chmod 777 setup.sh
+# chmod 777 master_setup.sh
 # please using redis 6+ version docker images as well.
 # After exec this shell, try cmd "docker stop redis-6010"  to check if sentinel take effect.
 # (it will cost servel seconds, set the redis configuration as you wish within the conf file).
+#
+# exec cmd "master_setup.sh stop" to shutdown and remove all docker containers.
 #
 
 MASTER_SLAVE_TMP_FOLDER=`pwd`"/master-slave-tmp"

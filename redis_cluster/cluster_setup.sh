@@ -4,6 +4,8 @@
 # After exec this shell, try cmd "docker stop redis-8010"  to check if sentinel take effect.
 # (it will cost servel seconds, set the redis configuration as you wish within the conf file).
 #
+# exec cmd "master_setup.sh stop" to shutdown and remove all docker containers.
+#
 LOCAL_IP=`ifconfig eth0 |awk -F '[ :]+' 'NR==2 {print $3}'`
 
 #For mac os
@@ -145,6 +147,7 @@ exec_rm_docker "${SENTINEL_PORT_ARRAY[*]}" "sentinel"
 
 if [[ $1 == "stop" ]]; then
   echo "stop docker containers"
+  rm -rf $CLUSTER_TMP_FOLDER
   exit 1
 fi
 
