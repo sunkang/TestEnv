@@ -28,7 +28,7 @@ fi
 if [ $1 = "go" ]; then
   docker run --rm -v $(pwd):$(pwd) -w $(pwd) alpine_grpc:v1 --go-grpc_out=./protobuf_generated --go_out=./protobuf_generated  --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative $2
 else
-  docker run --rm -v $(pwd):/home alpine_protobuf_generater:v1 --$1_out=/home/protobuf_generated $2
+  docker run --rm -v $(pwd):$(pwd) -w $(pwd) alpine_grpc:v1 --$1_out=./protobuf_generated $2
 fi
 echo "please check files generated within protobuf_generated:"
 ls protobuf_generated 
